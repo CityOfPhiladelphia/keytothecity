@@ -1,0 +1,10 @@
+bucket: oddt-pub-keys
+configurations:
+  airflow:
+    ubuntu:
+      - andrew.madonna@phila.gov
+      - tim.wisniewsk@phila.gov
+      - vito.salerno@phila.gov
+  my-app:
+    ubuntu:
+      - andrew.madonna@phila.gov
