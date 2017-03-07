@@ -1,9 +1,11 @@
 import re
+import sys
 
 import yaml
 import click
 import boto3
 import botocore
+from crontab import CronTab
 
 s3_client = None
 bucket = None
@@ -43,7 +45,7 @@ pub_key_regex = r'ssh-rsa\s.+\s(.+)$'
 @click.option('-c','--config-filename', default='auth_keys.yml', help='YAML config file path')
 @click.option('-o','--output-filename',
               default='/home/{user}/.ssh/authorized_keys',
-              help='Output file path. Optional {user} varialbe in path')
+              help='Output file path. Optional {user} variable in path')
 def sync(configuration_name, config_filename, output_filename):
     global s3_client, bucket
 
@@ -87,3 +89,26 @@ def sync(configuration_name, config_filename, output_filename):
             file.seek(0)
             file.truncate()
             file.write('\n'.join(out_lines))
+
+@main.command(help='Installs script as cron job')
+@click.argument('configuration_name')
+@click.option('-c','--config-filename', default='auth_keys.yml', help='YAML config file path')
+@click.option('-o','--output-filename',
+              default='/home/{user}/.ssh/authorized_keys',
+              help='Output file path. Optional {user} variable in path')
+@click.option('--cron-schedule', default='*/15 * * * *', help='Cron schedule')
+def install_cron(configuration_name, config_filename, output_filename, cron_schedule):
+    job_id = 'keytothecity'
+
+    cron = CronTab(user=True)
+
+    jobs = cron.find_comment(job_id)
+    if len(list(jobs)) > 0:
+        click.echo('keytothecity already installed')
+        sys.exit(0)
+
+    command = 'keytothecity sync {} -c {} -o {}'.format(configuration_name, config_filename, output_filename)
+
+    job = cron.new(command=command, comment=job_id)
+    job.setall(cron_schedule)
+    cron.write()
