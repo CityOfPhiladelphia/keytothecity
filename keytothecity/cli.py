@@ -26,7 +26,6 @@ def get_pub_key(pub_key_name):
             Bucket=bucket,
             Key=pub_key_name)
     except botocore.exceptions.ClientError as e:
-        print(e.response)
         if e.response['Error']['Code'] == 'NoSuchKey':
             raise Exception('Pub key `{}` not found'.format(pub_key_name))
         else:
@@ -39,27 +38,44 @@ def get_pub_key(pub_key_name):
     return pub_key
 
 pub_key_regex = r'ssh-rsa\s.+\s(.+)$'
+s3_path_regex = r'^s3://(?P<bucket>[^/]+)/(?P<key>.+)'
 
 @main.command(help='Sync authorized_keys from S3')
 @click.argument('configuration_name')
-@click.option('-c','--config-filename', default='auth_keys.yml', help='YAML config file path')
-@click.option('-o','--output-filename',
+@click.option('-c','--config-path', default='auth_keys.yml', help='YAML config file path. Local or on S3.')
+@click.option('-o','--output-path',
               default='/home/{user}/.ssh/authorized_keys',
               help='Output file path. Optional {user} variable in path')
-def sync(configuration_name, config_filename, output_filename):
+def sync(configuration_name, config_path, output_path):
     global s3_client, bucket
 
     s3_client = boto3.client('s3')
 
-    with open(config_filename) as file:
-        config_file = yaml.load(file)
+    s3_config = re.match(s3_path_regex, config_path)
+
+    if s3_config != None:
+        try:
+            s3_path = s3_config.groupdict()
+            response = s3_client.get_object(
+                Bucket=s3_path['bucket'],
+                Key=s3_path['key'])
+        except botocore.exceptions.ClientError as e:
+            if e.response['Error']['Code'] == 'NoSuchKey':
+                raise Exception('S3 config file `{}` not found'.format(pub_key_name))
+            else:
+                raise e
+
+        config_file = yaml.load(response['Body'])
+    else:
+        with open(config_path) as file:
+            config_file = yaml.load(file)
 
     bucket = config_file['bucket']
     config = config_file['configurations'][configuration_name]
-        
+
     for user in config:
         user_pub_keys = config[user]
-        with open(output_filename.format(user=user), 'r+') as file:
+        with open(output_path.format(user=user), 'r+') as file:
             out_lines = []
             keys_added = []
 
@@ -90,14 +106,37 @@ def sync(configuration_name, config_filename, output_filename):
             file.truncate()
             file.write('\n'.join(out_lines))
 
+@main.command(help='Uploads config file to S3')
+@click.option('-c','--local-config-path', help='YAML config file path. ')
+@click.option('-o','--remote-config-path', help='YAML config file path')
+def upload(local_config_path, remote_config_path):
+    if local_config_path != None:
+        file = open(local_config_path)
+    else:
+        file = sys.stdin
+
+    raw_file = file.read().encode('utf-8')
+
+    client = boto3.client('s3')
+
+    s3_path = re.match(s3_path_regex, remote_config_path).groupdict()
+
+    client.put_object(
+        Bucket=s3_path['bucket'],
+        Key=s3_path['key'],
+        Body=raw_file)
+
+    if local_config_path != None:
+        file.close()
+
 @main.command(help='Installs script as cron job')
 @click.argument('configuration_name')
-@click.option('-c','--config-filename', default='auth_keys.yml', help='YAML config file path')
-@click.option('-o','--output-filename',
+@click.option('-c','--config-path', default='auth_keys.yml', help='YAML config file path')
+@click.option('-o','--output-path',
               default='/home/{user}/.ssh/authorized_keys',
               help='Output file path. Optional {user} variable in path')
 @click.option('--cron-schedule', default='*/15 * * * *', help='Cron schedule')
-def install_cron(configuration_name, config_filename, output_filename, cron_schedule):
+def install_cron(configuration_name, config_path, output_path, cron_schedule):
     job_id = 'keytothecity'
 
     cron = CronTab(user=True)
@@ -107,7 +146,7 @@ def install_cron(configuration_name, config_filename, output_filename, cron_sche
         click.echo('keytothecity already installed')
         sys.exit(0)
 
-    command = 'keytothecity sync {} -c {} -o {}'.format(configuration_name, config_filename, output_filename)
+    command = 'keytothecity sync {} -c {} -o {}'.format(configuration_name, config_path, output_path)
 
     job = cron.new(command=command, comment=job_id)
     job.setall(cron_schedule)
