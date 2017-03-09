@@ -141,6 +141,9 @@ def install_cron(configuration_name, config_path, output_path, cron_schedule):
 
     cron = CronTab(user=True)
 
+    cron.env['SHELL'] = '/bin/bash'
+    cron.env['PATH'] = '/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin'
+
     jobs = cron.find_comment(job_id)
     if len(list(jobs)) > 0:
         click.echo('keytothecity already installed')
